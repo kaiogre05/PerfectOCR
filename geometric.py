@@ -22,7 +22,7 @@ def get_polygon_bounds(polygon_coords: List[List[Union[float, int]]]) -> Tuple[f
                 valid_coords.append([float(p[0]), float(p[1])])
             except (TypeError, ValueError, IndexError) as e_point:
                 logger.warning(f"Punto inválido {p} en get_polygon_bounds (coords: {polygon_coords}): {e_point}. Omitiendo punto.")
-                continue # Omitir este punto si no es válido
+                continue
         
         if not valid_coords or len(valid_coords) < 1: # Necesita al menos un punto válido
             logger.debug(f"get_polygon_bounds: No hay coordenadas válidas después de la conversión: {polygon_coords}")

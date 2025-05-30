@@ -1,9 +1,7 @@
 # PerfectOCR/utils/geometry_transformers.py
 import logging
 from typing import List, Dict, Any, Optional, Union
-
-# Asumiendo que get_shapely_polygon y get_polygon_bounds están en .geometric
-from .geometric import get_shapely_polygon, get_polygon_bounds 
+from utils.geometric import get_shapely_polygon
 
 logger = logging.getLogger(__name__)
 

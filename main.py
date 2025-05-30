@@ -25,7 +25,7 @@ if PROJECT_ROOT not in sys.path:
 
 MASTER_CONFIG_FILE = os.path.join(PROJECT_ROOT, "config", "master_config.yaml")
 LOG_FILE_PATH = os.path.join(PROJECT_ROOT, "perfectocr.txt")
-VALID_IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp', '.gif')
+VALID_IMAGE_EXTENSIONS = ('.png', '.jpg', '.jpeg', '.tif', '.tiff', '.bmp')
 
 def setup_logging():
     """Configura el sistema de logging centralizado."""
@@ -100,7 +100,7 @@ class PerfectOCRWorkflow:
     @property
     def input_validation_coordinator(self) -> InputValidationCoordinator:
         if self._input_validation_coordinator is None:
-            logger.debug("Inicializando InputValidationCoordinator bajo demanda...")
+            #logger.debug("Inicializando InputValidationCoordinator bajo demanda...")
             self._input_validation_coordinator = InputValidationCoordinator(
                 config=self.image_preparation_config,
                 project_root=self.project_root
@@ -110,7 +110,7 @@ class PerfectOCRWorkflow:
     @property
     def preprocessing_coordinator(self) -> PreprocessingCoordinator:
         if self._preprocessing_coordinator is None:
-            logger.debug("Inicializando PreprocessingCoordinator bajo demanda...")
+            #logger.debug("Inicializando PreprocessingCoordinator bajo demanda...")
             self._preprocessing_coordinator = PreprocessingCoordinator(
                 config=self.image_preparation_config,
                 project_root=self.project_root)
@@ -119,7 +119,7 @@ class PerfectOCRWorkflow:
     @property
     def spatial_analyzer_coordinator(self) -> SpatialAnalyzerCoordinator:
         if self._spatial_analyzer_coordinator is None:
-            logger.debug("Inicializando SpatialAnalyzerCoordinator bajo demanda...")
+            #logger.debug("Inicializando SpatialAnalyzerCoordinator bajo demanda...")
             self._spatial_analyzer_coordinator = SpatialAnalyzerCoordinator(
                 config=self.spatial_analyzer_config, project_root=self.project_root)
         return self._spatial_analyzer_coordinator
@@ -127,7 +127,7 @@ class PerfectOCRWorkflow:
     @property
     def ocr_coordinator(self) -> OCREngineCoordinator:
         if self._ocr_coordinator is None:
-            logger.info("Inicializando OCREngineCoordinator bajo demanda (puede tardar por carga de modelos)...")
+            #logger.info("Inicializando OCREngineCoordinator bajo demanda (puede tardar por carga de modelos)...")
             self._ocr_coordinator = OCREngineCoordinator(
                 config=self.ocr_config, project_root=self.project_root)
         return self._ocr_coordinator
@@ -135,7 +135,7 @@ class PerfectOCRWorkflow:
     @property
     def lineal_coordinator(self) -> LinealFinderCoordinator:
         if self._lineal_coordinator is None:
-            logger.debug("Inicializando LinealFinderCoordinator bajo demanda...")
+            #logger.debug("Inicializando LinealFinderCoordinator bajo demanda...")
             config_for_lineal_finder = {
                 "line_reconstructor_params": self.line_reconstructor_params_config,
                 "element_fusion_params": self.element_fusion_params_config,
@@ -151,7 +151,7 @@ class PerfectOCRWorkflow:
     @property
     def table_extraction_coordinator(self) -> TableAndFieldCoordinator:
         if self._table_extraction_coordinator is None:
-            logger.info("Inicializando TableAndFieldCoordinator bajo demanda...")
+           # logger.info("Inicializando TableAndFieldCoordinator bajo demanda...")
             self._table_extraction_coordinator = TableAndFieldCoordinator(
                 config=self.table_field_config,
                 project_root=self.project_root
@@ -276,6 +276,8 @@ class PerfectOCRWorkflow:
 
         return results, elapsed_time
 
+    # PerfectOCR/main.py (solo el método relevante de la clase PerfectOCRWorkflow)
+
     def process_document(self, input_path: str, output_dir_override: Optional[str] = None,
                         aggregated_tables_txt_path: Optional[str] = None) -> Optional[Dict[str, Any]]:
         overall_start_time = time.perf_counter()
@@ -283,117 +285,96 @@ class PerfectOCRWorkflow:
         original_file_name = os.path.basename(input_path)
         base_name = os.path.splitext(original_file_name)[0]
 
+        logger.info(f"Iniciando procesamiento de documento: {original_file_name}")
+
         current_output_dir = output_dir_override if output_dir_override else self.workflow_config.get(
             'output_folder', os.path.join(self.project_root, 'data', 'output_cli_default')
         )
-        try:
-            os.makedirs(current_output_dir, exist_ok=True)
-        except Exception as e_mkdir:
-            logger.critical(f"No se pudo crear directorio de salida {current_output_dir}: {e_mkdir}", exc_info=True)
-            return self._build_error_response("error_creating_output_dir", original_file_name, str(e_mkdir), "setup")
+        os.makedirs(current_output_dir, exist_ok=True)
 
-        # FASE 1: VALIDACIÓN
-        logger.info(f"FASE 1: Validando y obteniendo métricas para {original_file_name}")
-        quality_metrics, quality_observations, image_loaded_by_validator, time_val = \
-            self.input_validation_coordinator.validate_and_assess_image(input_path) #
-        processing_times_summary["1_input_validation"] = round(time_val, 4)
+        # FASE 1: VALIDACIÓN Y PLANIFICACIÓN
+        quality_observations, correction_plans, image_loaded, time_val = \
+            self.input_validation_coordinator.validate_and_assess_image(input_path)
+        
+        logger.info(f"Fase 1 completada - Imagen cargada: {image_loaded is not None}, Planes: {correction_plans is not None}")
 
-        validation_failed = False
-        error_msg_val = " "
-        if image_loaded_by_validator is None:
-            validation_failed = True
-            error_msg_val = "Fallo en carga de imagen por InputValidationCoordinator."
-        if quality_metrics and quality_metrics.get('error'):
-            validation_failed = True
-            error_msg_val = quality_metrics.get('error', "Error desconocido en validación de calidad.")
-        elif image_loaded_by_validator is None and not error_msg_val.strip():
-            validation_failed = True
-            error_msg_val = "Fallo en validación/carga de imagen (detalle no especificado en quality_metrics)."
+        if image_loaded is None or not correction_plans:
+            return self._build_error_response("error_input_validation", original_file_name,
+                                              "Fallo en carga o planificación.", "input_validation")
 
-        if validation_failed:
-            logger.error(f"Error en validación para {original_file_name}: {error_msg_val}")
-            if quality_observations:
-                logger.info(f"Observaciones de calidad (durante fallo de validación) para {original_file_name}: {quality_observations}")
-            return self._build_error_response("error_input_validation", original_file_name, error_msg_val, "input_validation")
-
-        #logger.info(f"Métricas de calidad para {original_file_name}: {json.dumps(quality_metrics, cls=NumpyEncoder, indent=2)}") #
-        #if quality_observations: # Solo loguear si hay observaciones
-         #   logger.info(f"Observaciones de calidad para {original_file_name}: {quality_observations}")
-
-
-        # FASE 2: PREPROCESAMIENTO
-        logger.info(f"FASE 2: Preprocesando imagen {original_file_name}")
-        preproc_output_tuple = self.preprocessing_coordinator.apply_preprocessing_pipeline( #
-            image_array=image_loaded_by_validator,
-            quality_assessment_metrics=quality_metrics,
+        # FASE 2: PREPROCESAMIENTO DIFERENCIADO
+        preproc_results, time_prep = self.preprocessing_coordinator.apply_preprocessing_pipelines(
+            image_array=image_loaded,
+            correction_plans=correction_plans,
             image_path_for_log=input_path
         )
-        if isinstance(preproc_output_tuple, tuple) and len(preproc_output_tuple) == 2:
-            preproc_results, time_prep = preproc_output_tuple
-        else:
-            logger.error(f"Salida inesperada de apply_preprocessing_pipeline para {original_file_name}.")
-            preproc_results = None
-            time_prep = 0.0
+        
+        logger.info(f"Fase 2 completada - Resultados preprocesamiento: {preproc_results is not None}")
 
-        processing_times_summary["2_preprocessing"] = round(time_prep, 4)
+        # Verificar solo las imágenes OCR, comentando temporalmente la verificación de spatial
+        if not preproc_results or "ocr_images" not in preproc_results:  # or "spatial_analysis_image" not in preproc_results:
+            return self._build_error_response("error_preprocessing", original_file_name, 
+                                            "Fallo en la generación de imágenes para OCR.", 
+                                            "preprocessing")
 
-        if not isinstance(preproc_results, dict) or "binary_image_for_ocr" not in preproc_results:
-            error_message_prep = "Fallo en preprocesamiento o imagen binaria no generada."
-            if isinstance(preproc_results, dict) and preproc_results.get("error"):
-                error_message_prep = preproc_results.get("error")
-            logger.error(f"Error en preprocesamiento para {original_file_name}: {error_message_prep}")
-            return self._build_error_response("error_preprocessing", original_file_name, error_message_prep, "preprocessing")
+        # Se extraen los outputs del diccionario de resultados del preprocesamiento
+        ocr_images_dict = preproc_results["ocr_images"]
+        # spatial_image = preproc_results["spatial_analysis_image"]  # Comentado temporalmente
 
-        binary_image = preproc_results["binary_image_for_ocr"]
-        #if preproc_results.get("preprocessing_parameters_used"):
-         #   logger.info(f"Parámetros de preprocesamiento usados para {original_file_name}: {json.dumps(preproc_results['preprocessing_parameters_used'], indent=2)}")
-
-        # FASE 2.5: ANÁLISIS ESPACIAL
-        spatial_results, time_spatial = self._analyze_spatial_features(binary_image, base_name, current_output_dir)
-        processing_times_summary["2.5_spatial_analysis"] = round(time_spatial, 4)
+        # FASE 2.5: ANÁLISIS ESPACIAL - Comentado temporalmente
+        # spatial_results, time_spatial = self._analyze_spatial_features(spatial_image, base_name, current_output_dir)
+        # processing_times_summary["2.5_spatial_analysis"] = round(time_spatial, 4)
 
         # FASE 3: OCR
-        # Pasamos quality_metrics (que es el quality_assessment de la fase 1)
-        ocr_results, time_ocr_coord = self._run_ocr(binary_image, original_file_name, quality_metrics)
+        ocr_results, time_ocr_coord = self.ocr_coordinator.run_ocr_parallel(
+            preprocessed_images=ocr_images_dict,
+            image_file_name=original_file_name
+        )
+
+        # Verificar si hubo un error en el OCR
+        if isinstance(ocr_results, dict) and "error" in ocr_results:
+            error_msg = ocr_results.get("error", "Error desconocido en OCR")
+            logger.error(f"Error en OCR para {original_file_name}: {error_msg}")
+            return self._build_error_response("error_ocr", original_file_name, error_msg, "ocr")
+
         processing_times_summary["3_ocr_coordination"] = round(time_ocr_coord, 4)
-        if isinstance(ocr_results, dict) and ocr_results.get("metadata", {}).get("processing_time_seconds"):
-            for k, v_ocr in ocr_results["metadata"]["processing_time_seconds"].items():
-                processing_times_summary[f"3.1_ocr_engine_{k}"] = round(v_ocr,4)
 
         if not self._validate_ocr_results(ocr_results, original_file_name):
-            return self._build_error_response("error_ocr", original_file_name, "OCR no produjo elementos de texto utilizables.", "ocr")
+             return self._build_error_response("error_ocr", original_file_name, "OCR no produjo texto utilizable.", "ocr")
 
         ocr_json_path = self._save_ocr_results(ocr_results if ocr_results else {}, base_name, current_output_dir)
 
-
-        # FASE 4: RECONSTRUCCIÓN DE LÍNEAS
+        # FASES 4 y 5: RECONSTRUCCIÓN Y EXTRACCIÓN
         line_reconstruction, time_line = self._reconstruct_lines(ocr_results if ocr_results else {}, base_name, current_output_dir)
         processing_times_summary["4_line_reconstruction"] = round(time_line, 4)
 
-        if not isinstance(line_reconstruction, dict) or not line_reconstruction.get('status', '').startswith('success'):
-            msg_line = line_reconstruction.get('message', 'Fallo en reconstrucción de líneas') if isinstance(line_reconstruction, dict) else 'Fallo en reconstrucción de líneas'
-            return self._build_error_response("error_line_reconstruction", original_file_name, msg_line, "line_reconstruction")
-
-        # FASE 5: EXTRACCIÓN DE DATOS ESTRUCTURADOS
+        # Modificar la llamada a _extract_structured_data para no usar spatial_results
         structured_results, time_table = self._extract_structured_data(
-            line_reconstruction, spatial_results, base_name, current_output_dir, aggregated_tables_txt_path
+            line_reconstruction, 
+            {},  # spatial_results comentado temporalmente
+            base_name, 
+            current_output_dir, 
+            aggregated_tables_txt_path
         )
         processing_times_summary["5_table_extraction"] = round(time_table, 4)
+
         overall_processing_time = time.perf_counter() - overall_start_time
         processing_times_summary["total_workflow_document"] = round(overall_processing_time, 4)
 
-        #logger.info(f"Resumen de tiempos de procesamiento para {original_file_name}:\n{json.dumps(processing_times_summary, indent=4, cls=NumpyEncoder)}")
-
         final_payload = self._build_final_response(
-            original_file_name, ocr_json_path, line_reconstruction,
+            original_file_name, 
+            ocr_json_path, 
+            line_reconstruction,
             structured_results if isinstance(structured_results, dict) else {"status_table_extraction": "error_no_table_results_or_failure", "table_matrix": {}}
         )
 
         if final_payload:
-            if "summary" not in final_payload: final_payload["summary"] = {}
+            if "summary" not in final_payload: 
+                final_payload["summary"] = {}
             final_payload["summary"]["processing_times_seconds"] = processing_times_summary
             if aggregated_tables_txt_path and os.path.exists(aggregated_tables_txt_path):
-                if "outputs" not in final_payload: final_payload["outputs"] = {}
+                if "outputs" not in final_payload: 
+                    final_payload["outputs"] = {}
                 final_payload["outputs"]["aggregated_tables_summary_txt"] = aggregated_tables_txt_path
 
         return final_payload

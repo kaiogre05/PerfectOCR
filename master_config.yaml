@@ -12,54 +12,41 @@ workflow:
 json_output_handler_config: {}
 
 image_preparation:
-  quality_assessment_params:
-    min_dpi_threshold: 300
-    sharpness_threshold_for_assessment: 60.0
-    contrast_std_dev_threshold_for_assessment: 20.0
-    skew_detection_inform_threshold: 0.1
-    severe_skew_degrees_for_assessment: 15.0
-  deskew: 
-    application_angle_threshold: 0.5
-    canny_threshold1: 50
-    canny_threshold2: 150
-    canny_aperture_size: 3 # Asegúrese que este nombre coincida con lo que usa en .get()
-    hough_min_line_length_cap_px: 300
-    hough_max_line_gap_px: 20
-    hough_threshold: 150
-    hough_angle_filter_range_degrees: [-20.0, 20.0] # Asegúrese que es una lista de dos números
-    rotation_min_abs_angle_to_apply_degrees: 0.05
+  quality_assessment_rules:
+    deskew:
+      min_angle_for_correction: 0.1
+      canny_thresholds: [50, 150]
+      hough_threshold: 150
+      hough_min_line_length_cap_px: 300
+      hough_max_line_gap_px: 20
+      hough_angle_filter_range_degrees: [-20.0, 20.0]
+    # REGLAS DIFERENCIADAS: Cada motor tiene su propio conjunto de reglas.
+    tesseract:
+      denoise:
+        sharpness_thresholds: [60.0, 120.0]
+        strengths_map: [7, 5, 3] # Menos agresivo para Tesseract
+      contrast_enhancement:
+        clahe_clip_limit: 1.2
+        dimension_thresholds_px: [1000, 2500]
+        grid_sizes_map: [[8, 8], [10, 10], [12, 12]]
+      binarization:
+        adaptive_c_value: 7
+        height_thresholds_px: [800, 1500, 2500]
+        block_sizes_map: [31, 41, 51, 61] # Bloques más grandes para Tesseract
 
-  denoise:
-    mode: "auto_from_metrics" # "fixed" or "auto_from_metrics"
-    fixed_strength: 7       # Strength if mode is "fixed"
-    auto_settings:          # Settings if mode is "auto_from_metrics"
-      sharpness_thresholds: [50.0, 100.0] # [lower_bound_for_medium, lower_bound_for_high]
-      strengths_map:        # Strengths for [low_sharpness, medium_sharpness, high_sharpness]
-        - 12                # For sharpness < sharpness_thresholds[0]
-        - 7                 # For sharpness_thresholds[0] <= sharpness < sharpness_thresholds[1]
-        - 5                 # For sharpness >= sharpness_thresholds[1]
-
-  contrast_enhancement:
-    clahe_clip_limit: 2.0
-    tile_grid_size_mode: "auto_from_dimensions" # "fixed" or "auto_from_dimensions"
-    fixed_tile_grid_size: [8, 8] # [width_tiles, height_tiles] if mode is "fixed"
-    auto_tile_settings:
-      dimension_thresholds_px: [1000, 2500] # [upper_for_small_grid, upper_for_medium_grid]
-      # Grid sizes: [[small_w,small_h], [medium_w,medium_h], [large_w,large_h]]
-      grid_sizes:
-        - [6, 6]    # If max(img_h,img_w) < dimension_thresholds_px[0]
-        - [8, 8]    # If dimension_thresholds_px[0] <= max(img_h,img_w) < dimension_thresholds_px[1]
-        - [12, 12]  # Else
-
-  binarization:
-    adaptive_c_value: 3
-    block_size_mode: "auto_image_size_heuristic" # "fixed" or "auto_image_size_heuristic"
-    fixed_block_size: 25 # Block size if mode is "fixed"
-    auto_block_size_settings:
-      height_thresholds_px: [800, 1500, 2500] 
-      #block_sizes: [bs_for_h<T0, bs_for_h<T1, bs_for_h<T2, bs_for_h>=T2] # [upper_for_bs1, upper_for_bs2, upper_for_bs3]
-      block_sizes: [11, 17, 25, 35]
-
+    paddleocr:
+      denoise:
+        sharpness_thresholds: [50.0, 100.0]
+        strengths_map: [12, 7, 5] # Más agresivo para Paddle
+      contrast_enhancement:
+        clahe_clip_limit: 2.0
+        dimension_thresholds_px: [1000, 2500]
+        grid_sizes_map: [[6, 6], [8, 8], [10, 10]]
+      binarization:
+        adaptive_c_value: 7
+        height_thresholds_px: [800, 1500, 2500]
+        block_sizes_map: [21, 25, 35, 41]
+        
 spatial_analyzer:
   density_map_window_size: 21 
 
@@ -69,11 +56,12 @@ ocr:
   tesseract:
     cmd_path: "C:/Program Files/Tesseract-OCR/tesseract.exe"
     lang: "spa+eng"
-    psm: 11
-    oem: 1
+    psm: 4  # Columnas de texto (mejor para recibos/facturas)
+    oem: 3  # Default auto-switch (activa LSTM)
+    dpi: 300  # DPI específico para mejor reconocimiento
     preserve_interword_spaces: 1
-    confidence_threshold: 0.5
-    tessedit_char_whitelist: "0123456789ABCDEFGHIJKLMNÑOPQRSTUVWXYZabcdefghijklmnñopqrstuvwxyz$./%#"
+    confidence_threshold: 25.0  # Umbral más bajo para capturar más palabras
+    tessedit_char_whitelist: ""  # Sin filtros para permitir todos los caracteres
     user_words_path: null # Path to a user words file, or null
     
   paddleocr:
@@ -90,18 +78,19 @@ line_reconstructor_params:
   y_centroid_alignment_ratio_threshold: 0.25
   y_centroid_abs_diff_threshold_px: 15.00
 
-paddle_tesseract_assignment_params:
-  min_vertical_overlap_ratio: 0.25
-  min_iou_for_assignment: 0.15
-  assign_if_tess_centroid_in_paddle_line: true
-  paddle_line_x_expansion_factor_for_centroid: 1.5
-
 element_fusion_params:
   iou_threshold_for_fusion: 0.50
   text_similarity_for_strong_match: 0.75
   paddle_confidence_normalization_factor: 85.00
   min_tess_confidence_for_text_priority: 0.50
   paddle_high_confidence_threshold: 90.00
+
+paddle_tesseract_assignment_params:
+  min_vertical_overlap_ratio: 0.25
+  min_iou_for_assignment: 0.15
+  assign_if_tess_centroid_in_paddle_line: true
+  paddle_line_x_expansion_factor_for_centroid: 1.5
+
 
 table_extraction_config:
   header_detector_config:

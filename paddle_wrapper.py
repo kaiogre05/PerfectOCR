@@ -1,18 +1,18 @@
 # PerfectOCR/core/ocr/paddle_wrapper.py
 import os
-import cv2 # Aunque PaddleOCR puede tomar rutas, a menudo se le pasa np.ndarray
+import cv2
 import logging
 import time
 import numpy as np
-from typing import Dict, Any, List, Optional, Union # Union para tipos de coordenadas
-from paddleocr import PaddleOCR # Importación principal
+from typing import Dict, Any, List, Optional, Union 
+from paddleocr import PaddleOCR
 
 logger = logging.getLogger(__name__)
 
 class PaddleOCRWrapper:
     def __init__(self, config_dict: Dict, project_root: str):
         self.paddle_config = config_dict
-        self.project_root = project_root # Necesario para resolver rutas relativas de modelos
+        self.project_root = project_root
         logger.debug(f"PaddleOCRWrapper inicializando con config: {self.paddle_config}")
 
         def resolve_model_path(model_key_in_config: str) -> Optional[str]:
@@ -20,7 +20,6 @@ class PaddleOCRWrapper:
             if relative_path:
                 if os.path.isabs(relative_path):
                     return relative_path if os.path.exists(relative_path) else None
-                # Resolver ruta relativa al project_root
                 absolute_path = os.path.abspath(os.path.join(self.project_root, relative_path))
                 if os.path.exists(absolute_path):
                     logger.debug(f"Modelo {model_key_in_config} encontrado en ruta absoluta resuelta: {absolute_path}")
@@ -125,6 +124,34 @@ class PaddleOCRWrapper:
     def extract_detailed_line_data(self, image: np.ndarray, image_file_name: Optional[str] = None) -> Dict[str, Any]:
         start_time = time.perf_counter()
         
+        # Verificar que la imagen sea válida
+        if image is None or not isinstance(image, np.ndarray):
+            logger.error(f"Imagen inválida para PaddleOCR: {type(image)}")
+            return {
+                "ocr_engine": "paddleocr",
+                "processing_time_seconds": round(time.perf_counter() - start_time, 3),
+                "image_info": {"file_name": image_file_name, "image_dimensions": {"width": 0, "height": 0}},
+                "recognized_text": {"full_text": "", "lines": []},
+                "error": "Invalid image input"
+            }
+        
+        # Verificar que la imagen esté en el formato correcto
+        if len(image.shape) == 3 and image.shape[2] == 4:  # BGRA
+            image = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
+        elif len(image.shape) == 3 and image.shape[2] == 3:  # BGR
+            pass
+        elif len(image.shape) == 2:  # Grayscale
+            image = cv2.cvtColor(image, cv2.COLOR_GRAY2BGR)
+        else:
+            logger.error(f"Formato de imagen no soportado para PaddleOCR: {image.shape}")
+            return {
+                "ocr_engine": "paddleocr",
+                "processing_time_seconds": round(time.perf_counter() - start_time, 3),
+                "image_info": {"file_name": image_file_name, "image_dimensions": {"width": 0, "height": 0}},
+                "recognized_text": {"full_text": "", "lines": []},
+                "error": "Unsupported image format"
+            }
+        
         if self.engine is None:
             logger.error("Motor PaddleOCR no inicializado. No se puede extraer texto.")
             processing_time = time.perf_counter() - start_time
@@ -141,18 +168,7 @@ class PaddleOCRWrapper:
         overall_avg_confidence = 0.0
 
         try:
-            if image is None:
-                raise ValueError("La imagen de entrada para PaddleOCR es None.")
-            
-            # El motor PaddleOCR espera una imagen en formato BGR (si es a color)
-            # Si la imagen ya está en escala de grises, PaddleOCR la maneja.
-            # Si es BGRA, convertir a BGR.
-            if len(image.shape) == 3 and image.shape[2] == 4: # BGRA
-                image_for_paddle = cv2.cvtColor(image, cv2.COLOR_BGRA2BGR)
-            else:
-                image_for_paddle = image
-
-            raw_paddle_result_list = self.engine.ocr(image_for_paddle, cls=self.paddle_config.get('use_angle_cls', True))
+            raw_paddle_result_list = self.engine.ocr(image, cls=self.paddle_config.get('use_angle_cls', True))
             
             parsed_lines_result = self._parse_paddle_result_to_spec(raw_paddle_result_list)
             
